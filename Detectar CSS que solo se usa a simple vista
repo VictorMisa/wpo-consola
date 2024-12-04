@@ -1,0 +1,155 @@
+// ==UserScript==
+// @name         Detectar CSS solo a simple vista
+// @namespace    http://tampermonkey.net/
+// @version      1.8
+// @description  Identifica las reglas CSS no utilizadas, muestra tablas y sugiere si mover al footer o eliminar.
+// @author       Tu Nombre
+// @match        *://*/*
+// @grant        none
+// ==/UserScript==
+
+
+(function () {
+    'use strict';
+
+    const estaEnViewport = (element) => {
+        const rect = element.getBoundingClientRect();
+        return (
+            rect.top >= 0 &&
+            rect.left >= 0 &&
+            rect.bottom <= (window.innerHeight || document.documentElement.clientHeight) &&
+            rect.right <= (window.innerWidth || document.documentElement.clientWidth)
+        );
+    };
+
+    const analizarCSS = () => {
+        const resultados = [];
+        const detallesUsados = [];
+        const detallesIgnorados = [];
+        const styleSheets = Array.from(document.styleSheets);
+
+        styleSheets.forEach(sheet => {
+            try {
+                const rules = sheet.cssRules || sheet.rules;
+                if (!rules) return;
+
+                const totalReglas = rules.length;
+                let noUsadas = 0;
+                let usadas = 0;
+                let ignoradas = 0;
+
+                Array.from(rules).forEach(rule => {
+                    if (rule.selectorText) {
+                        try {
+                            const elements = Array.from(document.querySelectorAll(rule.selectorText))
+                                .filter(estaEnViewport); // Filtrar solo elementos visibles
+
+                            if (elements.length === 0) {
+                                noUsadas++;
+                            } else {
+                                usadas++;
+                                detallesUsados.push({
+                                    Archivo: sheet.href || "Estilo en línea",
+                                    Selector: rule.selectorText,
+                                    "Elementos Afectados (visibles)": elements.length,
+                                    Reglas: rule.cssText
+                                });
+                            }
+                        } catch (e) {
+                            ignoradas++;
+                            detallesIgnorados.push({
+                                Archivo: sheet.href || "Estilo en línea",
+                                Regla: rule.cssText || "Sin texto",
+                                Motivo: "Selector inválido o no soportado"
+                            });
+                        }
+                    } else {
+                        ignoradas++;
+                        detallesIgnorados.push({
+                            Archivo: sheet.href || "Estilo en línea",
+                            Regla: rule.cssText || "Sin texto",
+                            Motivo: "Regla sin selector (ej. @media, @keyframes)"
+                        });
+                    }
+                });
+
+                if (totalReglas > 0) {
+                    const porcentajeNoUsado = ((noUsadas / totalReglas) * 100).toFixed(2);
+                    const porcentajeUsado = ((usadas / totalReglas) * 100).toFixed(2);
+                    const porcentajeIgnorado = ((ignoradas / totalReglas) * 100).toFixed(2);
+
+                    let accion = "Mantener";
+                    if (porcentajeNoUsado > 50) {
+                        accion = "Mover al footer";
+                    }
+                    if (porcentajeUsado < 10) {
+                        accion = "Eliminar";
+                    }
+
+                    resultados.push({
+                        Archivo: sheet.href || "Estilo en línea",
+                        "Total Reglas": totalReglas,
+                        "Reglas Utilizadas": usadas,
+                        "Reglas No Utilizadas": noUsadas,
+                        "Reglas Ignoradas": ignoradas,
+                        "% Usado": `${porcentajeUsado}%`,
+                        "% No Utilizado": `${porcentajeNoUsado}%`,
+                        "% Ignorado": `${porcentajeIgnorado}%`,
+                        Acción: accion
+                    });
+                }
+            } catch (e) {
+                console.warn(`No se pudieron analizar las reglas del archivo: ${sheet.href}`, e);
+            }
+        });
+
+        if (resultados.length > 0) {
+            console.log("Análisis general de CSS completo:");
+            console.table(resultados);
+            descargarComoCSV(resultados, "css_general.csv");
+        } else {
+            console.log("No se encontró ningún archivo CSS para analizar.");
+        }
+
+        if (detallesUsados.length > 0) {
+            console.log("Detalles de las reglas CSS utilizadas (visibles):");
+            console.table(detallesUsados);
+            descargarComoCSV(detallesUsados, "css_detalles_utilizados.csv");
+        } else {
+            console.log("No se encontraron reglas CSS utilizadas.");
+        }
+
+        if (detallesIgnorados.length > 0) {
+            console.log("Detalles de reglas CSS ignoradas:");
+            console.table(detallesIgnorados);
+            descargarComoCSV(detallesIgnorados, "css_detalles_ignorados.csv");
+        }
+    };
+
+    const convertirDatosACSV = (datos) => {
+        if (!datos || datos.length === 0) return "";
+        const encabezados = Object.keys(datos[0]).join(",");
+        const filas = datos.map(obj => Object.values(obj).map(val => `"${val}"`).join(","));
+        return [encabezados, ...filas].join("\n");
+    };
+
+    const descargarComoCSV = (datos, nombreArchivo) => {
+        const csv = convertirDatosACSV(datos);
+        const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+        const url = URL.createObjectURL(blob);
+
+        const enlace = document.createElement("a");
+        enlace.href = url;
+        enlace.download = nombreArchivo;
+        enlace.style.display = "none";
+
+        document.body.appendChild(enlace);
+        enlace.click();
+        document.body.removeChild(enlace);
+    };
+
+    window.addEventListener('load', () => {
+        console.log("Iniciando análisis de CSS visible...");
+        analizarCSS();
+    });
+})();
